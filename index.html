@@ -268,16 +268,17 @@
       .rank-guide {
         position: absolute;
         z-index: 6;
-        right: 2.2%;
-        top: 27%;
-        width: 21.5%;
-        padding: 7px 6px;
+        top: 31%;
+        width: 18.5%;
+        padding: 8px 6px;
         border: 1px solid #cda75f66;
         border-radius: 10px;
         background: linear-gradient(145deg, #061a12dc, #020a07e8);
         box-shadow: inset 0 0 18px #0009, 0 5px 14px #0008;
         pointer-events: none;
       }
+      .rank-guide.left { left: 2.2%; }
+      .rank-guide.right { right: 2.2%; }
       .rank-guide-title {
         margin-bottom: 4px;
         color: #f2d488;
@@ -686,12 +687,13 @@
           border-width: 5px;
         }
         .rank-guide {
-          right: 1.7%;
-          top: 28%;
-          width: 24%;
+          top: 32%;
+          width: 20.5%;
           padding: 5px 4px;
           border-radius: 7px;
         }
+        .rank-guide.left { left: 1.7%; }
+        .rank-guide.right { right: 1.7%; }
         .rank-guide-title { margin-bottom: 2px; font-size: 7px; }
         .rank-list { gap: 0; }
         .rank-row { min-height: 11px; padding: 1px 2px; font-size: 6px; }
@@ -808,11 +810,12 @@
           box-shadow: inset 0 0 0 3px #b98746, inset 0 0 85px #000, 0 18px 55px #000;
         }
         .rank-guide {
-          right: 2.4%;
-          top: 26%;
-          width: 20%;
+          top: 30%;
+          width: 17.5%;
           padding: 9px 8px;
         }
+        .rank-guide.left { left: 2.4%; }
+        .rank-guide.right { right: 2.4%; }
         .rank-row { min-height: 16px; font-size: 9px; }
         .seat { width: 19.2%; height: 31%; gap: 4px; }
         .seat.top { top: -1%; }
@@ -877,8 +880,8 @@
             <span>현재 총판돈</span><b id="pot">₩0</b>
             <div class="money"></div>
           </div>
-          <aside class="rank-guide" id="rankGuide" aria-label="섯다 족보 순위">
-            <div class="rank-guide-title">섯다 족보</div>
+          <aside class="rank-guide left" aria-label="섯다 족보 1위부터 7위">
+            <div class="rank-guide-title">족보 1~7위</div>
             <div class="rank-list">
               <div class="rank-row" data-rank="gwang38"><b>1</b>38광땡</div>
               <div class="rank-row" data-rank="gwang"><b>2</b>13·18광땡</div>
@@ -887,6 +890,11 @@
               <div class="rank-row" data-rank="ali"><b>5</b>알리</div>
               <div class="rank-row" data-rank="doksa"><b>6</b>독사</div>
               <div class="rank-row" data-rank="gubbing"><b>7</b>구삥</div>
+            </div>
+          </aside>
+          <aside class="rank-guide right" aria-label="섯다 족보 8위부터 13위와 특수패">
+            <div class="rank-guide-title">족보 8~13위</div>
+            <div class="rank-list">
               <div class="rank-row" data-rank="jangbbing"><b>8</b>장삥</div>
               <div class="rank-row" data-rank="jangsa"><b>9</b>장사</div>
               <div class="rank-row" data-rank="seryuk"><b>10</b>세륙</div>
