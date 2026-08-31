@@ -30,19 +30,29 @@ let pending = new Set();
 let resultText = "";
 let bettingDeadline = 0;
 let bettingTimer = null;
+let nextRoundTimer = null;
+let dealerSeat = -1;
+let turnSeat = -1;
+let raceRound = 0;
+let gameRunning = false;
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const cleanName = (value) => String(value || "").trim().slice(0, 8);
 const cleanToken = (value) => String(value || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
 const tokenOf = (socket) => socket.data.playerToken;
 const isConnected = (token) => (connections.get(token)?.size || 0) > 0;
-const activeSeats = () => seats.map((p, i) => p && !p.eliminated && !p.fold && p.cash > 0 ? i : -1).filter((i) => i >= 0);
+const activeSeats = () => seats.map((p, i) => p && !p.eliminated && !p.fold ? i : -1).filter((i) => i >= 0);
 const tournamentSeats = () => seats.map((p, i) => p && !p.eliminated && p.cash > 0 ? i : -1).filter((i) => i >= 0);
 
 function clearBettingTimer() {
   if (bettingTimer) clearTimeout(bettingTimer);
   bettingTimer = null;
   bettingDeadline = 0;
+}
+
+function clearNextRoundTimer() {
+  if (nextRoundTimer) clearTimeout(nextRoundTimer);
+  nextRoundTimer = null;
 }
 
 function freshDeck() {
@@ -106,10 +116,11 @@ function publicState(socketId) {
   const revealAll = phase === "reveal" || phase === "result";
   return {
     round, phase, message, resultText, pot, currentBet, busy,
+    dealerSeat, turnSeat, raceRound, gameRunning,
     bettingDeadline, bettingSeconds: BETTING_SECONDS,
     adminActive: admins.size > 0, isAdmin: admins.has(socketId),
     youSeat: seats.findIndex((p) => p?.playerToken === viewerToken),
-    canAct: pending.has(viewerToken),
+    canAct: turnSeat >= 0 && seats[turnSeat]?.playerToken === viewerToken && pending.has(viewerToken),
     seats: seats.map((p) => p && ({
       name: p.name, character: p.character, cash: p.cash, bet: p.bet,
       fold: p.fold, eliminated: p.eliminated, missedBets: p.missedBets,
@@ -130,6 +141,7 @@ function invest(player, amount) {
   player.bet += value;
   pot += value;
   currentBet = Math.max(currentBet, player.bet);
+  return value;
 }
 
 async function dealOneEach() {
@@ -140,34 +152,70 @@ async function dealOneEach() {
   }
 }
 
-function beginBetting(nextPhase) {
+function nextPendingSeat(afterSeat) {
+  for (let step = 1; step <= seats.length; step++) {
+    const index = (afterSeat + step + seats.length) % seats.length;
+    const player = seats[index];
+    if (player && !player.fold && !player.eliminated && pending.has(player.playerToken)) return index;
+  }
+  return -1;
+}
+
+function turnMessage() {
+  const player = seats[turnSeat];
+  if (!player) return "베팅 진행 중";
+  const stage = phase === "bet1" ? "1차 베팅" : "최종 베팅";
+  return `${stage} · 레이스 ${raceRound} · ${turnSeat + 1}번 ${player.name} 차례`;
+}
+
+function startTurnTimer() {
   clearBettingTimer();
-  phase = nextPhase;
-  busy = false;
-  message = nextPhase === "bet1" ? "첫 패 · 1차 베팅" : "두 패 · 최종 베팅";
-  pending = new Set(activeSeats().map((i) => seats[i].playerToken));
+  if (turnSeat < 0 || !seats[turnSeat]) return;
+  message = turnMessage();
   bettingDeadline = Date.now() + BETTING_SECONDS * 1000;
+  const timedSeat = turnSeat;
   bettingTimer = setTimeout(() => {
     bettingTimer = null;
     bettingDeadline = 0;
-    for (const token of [...pending]) {
-      const index = seats.findIndex((p) => p?.playerToken === token);
-      const player = seats[index];
-      if (!player) continue;
+    if (turnSeat !== timedSeat || !["bet1", "bet2"].includes(phase)) return;
+    const player = seats[timedSeat];
+    if (player && !player.fold) {
       player.fold = true;
       player.missedBets = (player.missedBets || 0) + 1;
       if (player.missedBets >= MAX_MISSED_BETS) {
         player.eliminated = true;
         player.cash = 0;
       }
+      pending.delete(player.playerToken);
+      io.emit("bet-action", { seat: timedSeat, type: "fold", amount: 0, automatic: true });
     }
-    pending.clear();
-    message = "15초 미응답 · 자동 다이";
+    message = `${timedSeat + 1}번 · 시간 초과 자동 다이`;
     broadcast();
-    if (!announceLastSurvivor()) advance();
+    continueRace(timedSeat);
   }, BETTING_SECONDS * 1000);
   broadcast();
-  if (!pending.size) settle();
+}
+
+function continueRace(afterSeat) {
+  clearBettingTimer();
+  if (activeSeats().length <= 1) return settle();
+  turnSeat = nextPendingSeat(afterSeat);
+  if (turnSeat < 0) {
+    pending.clear();
+    return advance();
+  }
+  startTurnTimer();
+}
+
+function beginBetting(nextPhase) {
+  clearBettingTimer();
+  phase = nextPhase;
+  busy = false;
+  raceRound = 1;
+  pending = new Set(activeSeats().filter((i) => seats[i].cash > 0).map((i) => seats[i].playerToken));
+  turnSeat = nextPendingSeat(dealerSeat);
+  if (turnSeat < 0) return settle();
+  startTurnTimer();
 }
 
 function announceLastSurvivor() {
@@ -177,6 +225,8 @@ function announceLastSurvivor() {
   clearBettingTimer();
   pending.clear();
   const winner = seats[remaining[0]];
+  gameRunning = false;
+  clearNextRoundTimer();
   phase = "result";
   busy = false;
   resultText = `최후의 1인 · ${winner.name} 우승`;
@@ -185,22 +235,34 @@ function announceLastSurvivor() {
   return true;
 }
 
-async function startRound() {
-  if (busy || !seats.some(Boolean) || announceLastSurvivor()) return;
+function chooseNextDealer() {
+  for (let step = 1; step <= seats.length; step++) {
+    const index = (dealerSeat + step + seats.length) % seats.length;
+    const player = seats[index];
+    if (player && !player.eliminated && player.cash > 0 && isConnected(player.playerToken)) return index;
+  }
+  return -1;
+}
+
+async function startRound(options = {}) {
+  if (busy || !gameRunning || !seats.some(Boolean) || announceLastSurvivor()) return;
+  clearNextRoundTimer();
   clearBettingTimer();
   busy = true;
   round += 1;
   phase = "deal1";
   resultText = "";
   message = "첫 패를 돌립니다";
-  pot = 0;
+  if (!options.keepPot) pot = 0;
   currentBet = ANTE;
   deck = freshDeck();
+  dealerSeat = chooseNextDealer();
+  const rematchTokens = options.rematchTokens || null;
   for (const p of seats) if (p) {
     // Keep a temporarily disconnected player's seat, but never let an offline
     // seat block a newly started betting round.
     p.cards = []; p.bet = 0;
-    p.fold = p.eliminated || p.cash <= 0 || !isConnected(p.playerToken);
+    p.fold = p.eliminated || p.cash <= 0 || !isConnected(p.playerToken) || (rematchTokens && !rematchTokens.has(p.playerToken));
     if (!p.fold) invest(p, ANTE);
   }
   broadcast();
@@ -210,7 +272,7 @@ async function startRound() {
 
 async function advance() {
   clearBettingTimer();
-  if (announceLastSurvivor()) return;
+  turnSeat = -1;
   const live = activeSeats();
   if (live.length <= 1) return settle();
   if (phase === "bet1") {
@@ -224,7 +286,10 @@ async function advance() {
 
 async function settle() {
   clearBettingTimer();
-  if (busy && phase === "result") return;
+  turnSeat = -1;
+  // A timeout/disconnect can arrive at nearly the same time as the final bet.
+  // Never settle the same hand twice or create competing next-round timers.
+  if (busy && (phase === "reveal" || phase === "result")) return;
   busy = true;
   phase = "reveal";
   message = "패를 공개합니다";
@@ -234,6 +299,20 @@ async function settle() {
   if (!live.length) {
     resultText = "승자 없음";
   } else {
+    const rematchPlayer = live.find((p) => {
+      const months = p.cards.map((card) => card.m).sort((a, b) => a - b);
+      return months[0] === 4 && months[1] === 9;
+    });
+    if (rematchPlayer && live.length > 1) {
+      const rematchTokens = new Set(live.map((p) => p.playerToken));
+      phase = "result";
+      busy = false;
+      resultText = `4·9 / 9·4 구사 · 판돈 ₩${pot.toLocaleString("ko-KR")} 재경기`;
+      message = resultText;
+      broadcast();
+      if (gameRunning) nextRoundTimer = setTimeout(() => startRound({ keepPot: true, rematchTokens }), 3500);
+      return;
+    }
     const best = Math.max(...live.map((p) => score(p, live)));
     const winners = live.filter((p) => score(p, live) === best);
     const share = Math.floor(pot / winners.length);
@@ -241,10 +320,15 @@ async function settle() {
     resultText = `${winners.map((p) => p.name).join(" · ")} · ${hand(winners[0].cards)} 승리 · ₩${share.toLocaleString("ko-KR")}`;
   }
   pot = 0;
+  for (const player of seats) {
+    if (player && !player.eliminated && player.cash <= 0) player.eliminated = true;
+  }
   phase = "result";
   message = resultText;
   busy = false;
   broadcast();
+  if (announceLastSurvivor()) return;
+  if (gameRunning) nextRoundTimer = setTimeout(() => startRound(), 3500);
 }
 
 io.on("connection", (socket) => {
@@ -283,30 +367,48 @@ io.on("connection", (socket) => {
   socket.on("bet", (type, ack = () => {}) => {
     const index = seats.findIndex((p) => p?.playerToken === playerToken);
     const p = seats[index];
-    if (!p || !["bet1", "bet2"].includes(phase) || !pending.has(playerToken) || p.fold) return ack({ ok: false });
+    if (!p || index !== turnSeat || !["bet1", "bet2"].includes(phase) || !pending.has(playerToken) || p.fold) return ack({ ok: false, error: "현재 베팅 차례가 아닙니다" });
     const need = Math.max(0, currentBet - p.bet);
+    const beforeCurrentBet = currentBet;
+    let amount = 0;
     if (type === "fold") p.fold = true;
-    else if (type === "check") { if (need > 0) invest(p, need); }
-    else if (type === "call") invest(p, need);
-    else if (type === "ddang") invest(p, need + Math.max(ANTE, currentBet));
-    else if (type === "half") invest(p, need + Math.max(ANTE, pot / 2));
-    else return ack({ ok: false });
+    else if (type === "check") {
+      if (need > 0) return ack({ ok: false, error: "받아야 할 금액이 있어 체크할 수 없습니다" });
+    }
+    else if (type === "call") amount = invest(p, need);
+    else if (type === "ddang") amount = invest(p, need + Math.max(ANTE, currentBet));
+    else if (type === "half") amount = invest(p, need + Math.max(ANTE, pot / 2));
+    else return ack({ ok: false, error: "알 수 없는 베팅입니다" });
     pending.delete(playerToken);
-    ack({ ok: true });
+    const raised = currentBet > beforeCurrentBet;
+    if (raised) {
+      raceRound += 1;
+      pending = new Set(activeSeats()
+        .filter((seatIndex) => seatIndex !== index && seats[seatIndex].cash > 0)
+        .map((seatIndex) => seats[seatIndex].playerToken));
+    }
+    io.emit("bet-action", { seat: index, type, amount, automatic: false });
+    ack({ ok: true, amount, raised });
     broadcast();
-    if (!announceLastSurvivor() && (!pending.size || activeSeats().length <= 1)) advance();
+    continueRace(index);
   });
 
   socket.on("admin-login", (password, ack = () => {}) => {
     if (String(password) !== ADMIN_PASSWORD) return ack({ ok: false });
     admins.add(socket.id); ack({ ok: true }); broadcast();
   });
-  socket.on("admin-start", () => { if (admins.has(socket.id)) startRound(); });
+  socket.on("admin-start", () => {
+    if (!admins.has(socket.id)) return;
+    gameRunning = true;
+    if (["idle", "result"].includes(phase)) startRound();
+  });
   socket.on("admin-restart", () => {
     if (!admins.has(socket.id)) return;
     for (const timer of actionTimers.values()) clearTimeout(timer);
     actionTimers.clear();
     clearBettingTimer();
+    clearNextRoundTimer();
+    gameRunning = false; turnSeat = -1; dealerSeat = -1; raceRound = 0;
     busy = false; phase = "idle"; pending.clear(); resultText = ""; message = "게임이 재시작되었습니다";
     for (const p of seats) if (p) { p.cash = BUY_IN; p.cards = []; p.bet = 0; p.fold = false; p.eliminated = false; p.missedBets = 0; }
     pot = 0; currentBet = 0; round = 0; broadcast();
@@ -317,6 +419,8 @@ io.on("connection", (socket) => {
     for (const timer of actionTimers.values()) clearTimeout(timer);
     cleanupTimers.clear(); actionTimers.clear();
     clearBettingTimer();
+    clearNextRoundTimer();
+    gameRunning = false; turnSeat = -1; dealerSeat = -1; raceRound = 0;
     for (let i = 0; i < seats.length; i++) seats[i] = null;
     busy = false; phase = "idle"; pending.clear(); resultText = ""; message = "방이 종료되었습니다";
     pot = 0; currentBet = 0; round = 0; broadcast(); io.emit("room-exploded");

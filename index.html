@@ -418,6 +418,12 @@
       }
       .badge.eliminated { opacity: .55; border-color: #a92e27; background: #260807; }
       .badge .missed { color: #d89372; font-size: 9px; }
+      .seat.turn .badge { opacity: 1; border-color: #ffd66f; box-shadow: 0 0 0 2px #9b3a1f, 0 0 22px #ffbf4388; animation: turnGlow .65s infinite alternate; }
+      .seat.turn .badge::after { content: "BETTING"; display: block; color: #ffe18b; font-size: 8px; font-weight: 900; letter-spacing: 1px; }
+      .seat.turn .badge { border-color: #ffd56e; box-shadow: 0 0 0 3px #8b2b20, 0 0 24px #ffc84d99; animation: turnGlow .65s infinite alternate; }
+      @keyframes turnGlow { to { filter: brightness(1.22); transform: translateY(-2px); } }
+      .center-msg.turn-live { color: #ffe18b; text-shadow: 0 2px 8px #000, 0 0 15px #db8b29; }
+      @keyframes turnGlow { to { filter: brightness(1.2); } }
       .dealer {
         font-style: normal;
         color: #111;
@@ -1605,6 +1611,7 @@
       });
       function openSeatLobby() {
         startBgm();
+        getAudioCtx();
         $("#intro").classList.add("hidden");
         $("#seatLobby").classList.remove("hidden");
         setTimeout(() => $("#nickname").focus(), 400);
@@ -1766,18 +1773,20 @@
             const cards = p.cards.map((c) => c ? card(c, false) : backCard()).join("");
             const handLabel = p.hand ? `<span class="handname">${physicalSeat === mySeat ? "내 족보 · " : ""}${p.hand}</span>` : "";
             const status = p.eliminated ? "자동 탈락" : `미베팅 ${p.missedBets || 0}/10`;
-            return `<div class="seat ${top ? "top" : "bottom"} s${pos + 1}" data-seat="${physicalSeat}"><div class="badge ${p.fold ? "fold" : ""} ${p.eliminated ? "eliminated" : ""}"><div class="name">${avatar}${physicalSeat + 1}. ${p.name}</div><div class="cash">₩${fmt(p.cash)}</div><div class="missed">${status}</div></div><div class="cards">${cards}${handLabel}</div></div>`;
+            const isTurn = networkState.turnSeat === physicalSeat;
+            return `<div class="seat ${top ? "top" : "bottom"} s${pos + 1} ${isTurn ? "turn" : ""}" data-seat="${physicalSeat}"><div class="badge ${p.fold ? "fold" : ""} ${p.eliminated ? "eliminated" : ""}"><div class="name">${avatar}${physicalSeat + 1}. ${p.name}</div><div class="cash">₩${fmt(p.cash)}</div><div class="missed">${status}</div></div><div class="cards">${cards}${handLabel}</div></div>`;
           }).join("");
           $("#pot").textContent = "₩" + fmt(networkState.pot);
           $("#round").textContent = networkState.round ? `제 ${networkState.round}판` : "대기실";
           $("#phase").textContent = networkState.message || "";
           $("#msg").textContent = networkState.message || "";
+          $("#msg").classList.toggle("turn-live", networkState.turnSeat >= 0);
           paintBetTimer();
           const hideAdmin = networkState.adminActive && !networkState.isAdmin;
           $("#adminOpen").classList.toggle("hidden", hideAdmin);
           if (hideAdmin) $("#adminModal").classList.add("hidden");
           const me = mySeat >= 0 ? networkState.seats[mySeat] : null;
-          $("#meLabel").textContent = me ? `${mySeat + 1}번 · ${me.name}` : "자리 선택 전";
+          $("#meLabel").textContent = me ? `${networkState.canAct ? "▶ 내 베팅 차례 · " : ""}${mySeat + 1}번 · ${me.name}` : "자리 선택 전";
           $("#mycash").textContent = fmt(me?.cash || 0);
           $("#mybet").textContent = fmt(me?.bet || 0);
           const activeRank = rankGroup(me?.hand || "");
@@ -1786,7 +1795,9 @@
           });
           document.querySelectorAll("[data-act]").forEach((button) => {
             button.disabled = !networkState.canAct;
-            button.onclick = () => socket.emit("bet", button.dataset.act);
+            button.onclick = () => socket.emit("bet", button.dataset.act, (reply) => {
+              if (!reply?.ok && reply?.error) alert(reply.error);
+            });
           });
           document.querySelectorAll("[data-lobby-seat]").forEach((button) => {
             const occupied = Boolean(networkState.seats[+button.dataset.lobbySeat]);
@@ -1814,6 +1825,11 @@
             $("#game").classList.remove("prejoin");
           }
           renderNetwork();
+        });
+
+        socket.on("bet-action", ({ seat, type, amount }) => {
+          speakBet(type);
+          if (amount > 0) moneyFly(seat, amount);
         });
 
         $("#sitButton").onclick = () => {
