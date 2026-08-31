@@ -427,6 +427,8 @@
       .seat.turn .badge { opacity: 1; border-color: #ffd66f; box-shadow: 0 0 0 2px #9b3a1f, 0 0 22px #ffbf4388; animation: turnGlow .65s infinite alternate; }
       .seat.turn .badge::after { content: "BETTING"; display: block; color: #ffe18b; font-size: 8px; font-weight: 900; letter-spacing: 1px; }
       .seat.turn .badge { border-color: #ffd56e; box-shadow: 0 0 0 3px #8b2b20, 0 0 24px #ffc84d99; animation: turnGlow .65s infinite alternate; }
+      .game.admin-mode .seat:not(.empty) .badge { cursor: crosshair; box-shadow: 0 0 0 2px #d8493a99, 0 0 15px #d8493a55; }
+      .game.admin-mode .seat:not(.empty) .badge:hover { border-color: #ff6255; filter: brightness(1.18); }
       @keyframes turnGlow { to { filter: brightness(1.22); transform: translateY(-2px); } }
       .center-msg.turn-live { color: #ffe18b; text-shadow: 0 2px 8px #000, 0 0 15px #db8b29; }
       @keyframes turnGlow { to { filter: brightness(1.2); } }
@@ -1794,6 +1796,7 @@
           $("#msg").classList.toggle("turn-live", networkState.turnSeat >= 0);
           paintBetTimer();
           const hideAdmin = networkState.adminActive && !networkState.isAdmin;
+          $("#game").classList.toggle("admin-mode", networkState.isAdmin);
           $("#adminOpen").classList.toggle("hidden", hideAdmin);
           if (hideAdmin) $("#adminModal").classList.add("hidden");
           const me = mySeat >= 0 ? networkState.seats[mySeat] : null;
@@ -1809,6 +1812,17 @@
             button.onclick = () => socket.emit("bet", button.dataset.act, (reply) => {
               if (!reply?.ok && reply?.error) alert(reply.error);
             });
+          });
+          document.querySelectorAll(".seat[data-seat]").forEach((seatElement) => {
+            seatElement.onclick = () => {
+              if (!networkState.isAdmin) return;
+              const seat = Number(seatElement.dataset.seat);
+              const player = networkState.seats[seat];
+              if (!player || !confirm(`${seat + 1}번 ${player.name}님을 강퇴하시겠습니까?`)) return;
+              socket.emit("admin-kick", seat, (reply) => {
+                if (!reply?.ok) alert(reply?.error || "강퇴하지 못했습니다");
+              });
+            };
           });
           document.querySelectorAll("[data-lobby-seat]").forEach((button) => {
             const occupied = Boolean(networkState.seats[+button.dataset.lobbySeat]);
@@ -1849,6 +1863,11 @@
         socket.on("bet-action", ({ seat, type, amount }) => {
           speakBet(type);
           if (amount > 0) moneyFly(seat, amount);
+        });
+
+        socket.on("kicked", ({ message } = {}) => {
+          alert(message || "관리자에 의해 강퇴되었습니다");
+          location.reload();
         });
 
         $("#sitButton").onclick = () => {

@@ -14,6 +14,8 @@ const ANTE = 10_000;
 const ADMIN_PASSWORD = "8959";
 const BETTING_SECONDS = 15;
 const MAX_MISSED_BETS = 10;
+const DISCONNECT_ACTION_GRACE = 20_000;
+const LOBBY_CLEANUP_GRACE = 5 * 60_000;
 const seats = Array(10).fill(null);
 const admins = new Set();
 const connections = new Map();
@@ -287,8 +289,16 @@ async function startRound(options = {}) {
   for (const p of seats) if (p) {
     // Keep a temporarily disconnected player's seat, but never let an offline
     // seat block a newly started betting round.
+    const offline = !isConnected(p.playerToken);
+    if (offline && !p.eliminated && p.cash > 0) {
+      p.missedBets = (p.missedBets || 0) + 1;
+      if (p.missedBets >= MAX_MISSED_BETS) {
+        p.eliminated = true;
+        p.cash = 0;
+      }
+    }
     p.cards = []; p.bet = 0;
-    p.fold = p.eliminated || p.cash <= 0 || !isConnected(p.playerToken) || (rematchTokens && !rematchTokens.has(p.playerToken));
+    p.fold = p.eliminated || p.cash <= 0 || offline || (rematchTokens && !rematchTokens.has(p.playerToken));
     if (!p.fold) invest(p, ANTE);
   }
   broadcast();
@@ -381,6 +391,7 @@ io.on("connection", (socket) => {
       ack({ ok: true, restored: true, seat: old });
       return broadcast();
     }
+    if (gameRunning) return ack({ ok: false, error: "게임 진행 중에는 새로 참여할 수 없습니다" });
     if (seats[seat]) return ack({ ok: false, error: "이미 사용 중인 자리입니다" });
     seats[seat] = { playerToken, name, character, cash: BUY_IN, cards: [], bet: 0, fold: false, eliminated: false, missedBets: 0 };
     ack({ ok: true });
@@ -449,6 +460,35 @@ io.on("connection", (socket) => {
     pot = 0; currentBet = 0; round = 0; broadcast(); io.emit("room-exploded");
   });
 
+  socket.on("admin-kick", (seatValue, ack = () => {}) => {
+    if (!admins.has(socket.id)) return ack({ ok: false, error: "관리자 권한이 없습니다" });
+    const seat = Number(seatValue);
+    if (!Number.isInteger(seat) || seat < 0 || seat >= seats.length || !seats[seat]) {
+      return ack({ ok: false, error: "강퇴할 참가자가 없습니다" });
+    }
+    const kicked = seats[seat];
+    const wasTurn = turnSeat === seat;
+    pending.delete(kicked.playerToken);
+    if (actionTimers.has(kicked.playerToken)) {
+      clearTimeout(actionTimers.get(kicked.playerToken));
+      actionTimers.delete(kicked.playerToken);
+    }
+    if (cleanupTimers.has(kicked.playerToken)) {
+      clearTimeout(cleanupTimers.get(kicked.playerToken));
+      cleanupTimers.delete(kicked.playerToken);
+    }
+    for (const kickedSocketId of connections.get(kicked.playerToken) || []) {
+      io.to(kickedSocketId).emit("kicked", { message: "관리자에 의해 강퇴되었습니다" });
+    }
+    seats[seat] = null;
+    ack({ ok: true, name: kicked.name });
+    broadcast();
+    if (["bet1", "bet2"].includes(phase)) {
+      if (activeSeats().length <= 1) return settle();
+      if (wasTurn) return continueRace(seat);
+    }
+  });
+
   socket.on("disconnect", () => {
     admins.delete(socket.id);
     const set = connections.get(playerToken);
@@ -463,22 +503,29 @@ io.on("connection", (socket) => {
         actionTimers.delete(playerToken);
         if (!isConnected(playerToken) && pending.delete(playerToken)) {
           const index = seats.findIndex((p) => p?.playerToken === playerToken);
-          if (index >= 0 && seats[index]) seats[index].fold = true;
+          if (index >= 0 && seats[index]) {
+            seats[index].fold = true;
+            seats[index].missedBets = (seats[index].missedBets || 0) + 1;
+            if (seats[index].missedBets >= MAX_MISSED_BETS) {
+              seats[index].eliminated = true;
+              seats[index].cash = 0;
+            }
+          }
           broadcast();
           if (!pending.size || activeSeats().length <= 1) advance();
         }
-      }, 20_000);
+      }, DISCONNECT_ACTION_GRACE);
       actionTimers.set(playerToken, actionTimer);
     }
     const cleanupTimer = setTimeout(() => {
       cleanupTimers.delete(playerToken);
       if (isConnected(playerToken)) return;
+      if (gameRunning) return broadcast();
       const index = seats.findIndex((p) => p?.playerToken === playerToken);
       if (index >= 0) seats[index] = null;
       pending.delete(playerToken);
       broadcast();
-      if (["bet1", "bet2"].includes(phase) && (!pending.size || activeSeats().length <= 1)) advance();
-    }, 60_000);
+    }, LOBBY_CLEANUP_GRACE);
     cleanupTimers.set(playerToken, cleanupTimer);
   });
 });
