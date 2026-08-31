@@ -714,6 +714,7 @@
       .toast.show.closable { pointer-events: auto; }
       .toast strong {
         display: block;
+        white-space: pre-line;
         font: 900 27px Georgia;
       }
       @media (min-width: 0px) {
@@ -1529,13 +1530,10 @@
             ?.classList.add("win-flash");
         });
         playVictoryChime();
-        $("#toast").innerHTML =
-          "<strong>" +
-          wins.map((p) => p.name).join(" · ") +
-          "</strong>" +
-          hand(wins[0].cards) +
-          " · 획득 ₩" +
-          fmt(share);
+        $("#toast").innerHTML = "<strong></strong>";
+        $("#toast strong").textContent = wins
+          .map((p) => `${p.name} · ${hand(p.cards)} · ₩${fmt(share)}`)
+          .join("\n");
         $("#toast").classList.add("show");
         $("#msg").textContent = hand(wins[0].cards) + " 승리";
         $("#phase").textContent = "패 공개 완료";
@@ -1837,7 +1835,8 @@
           if (networkState.resultText && networkState.resultText !== dismissedFinalResult) {
             const isFinalWinner = networkState.resultText.startsWith("최후의 1인");
             $("#toast").classList.toggle("closable", isFinalWinner);
-            $("#toast").innerHTML = `${isFinalWinner ? '<button class="toast-close" aria-label="우승창 닫기">×</button>' : ""}<strong>${networkState.resultText}</strong>`;
+            $("#toast").innerHTML = `${isFinalWinner ? '<button class="toast-close" aria-label="우승창 닫기">×</button>' : ""}<strong></strong>`;
+            $("#toast strong").textContent = networkState.resultText;
             $("#toast").classList.add("show");
             const close = $("#toast .toast-close");
             if (close) close.onclick = () => {

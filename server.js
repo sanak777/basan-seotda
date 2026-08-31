@@ -350,7 +350,9 @@ async function settle() {
     const winners = live.filter((p) => score(p, live) === best);
     const share = Math.floor(pot / winners.length);
     winners.forEach((p) => { p.cash += share; });
-    resultText = `${winners.map((p) => p.name).join(" · ")} · ${hand(winners[0].cards)} 승리 · ₩${share.toLocaleString("ko-KR")}`;
+    resultText = winners
+      .map((p) => `${p.name} · ${hand(p.cards)} · ₩${share.toLocaleString("ko-KR")}`)
+      .join("\n");
   }
   pot = 0;
   for (const player of seats) {
