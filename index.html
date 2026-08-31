@@ -167,6 +167,11 @@
         text-align: center;
         color: #aa844d;
       }
+      .brand-mobile { display: none; }
+      @media (max-width: 540px) {
+        .brand-desktop { display: none; }
+        .brand-mobile { display: inline; white-space: nowrap; }
+      }
       .status {
         text-align: right;
       }
@@ -909,7 +914,7 @@
     <div class="game prejoin" id="game">
       <header>
         <div class="brand">
-          바카라산악회 느와르 섯다<small>BASAN NOIR SEOTDA</small>
+          <span class="brand-desktop">바카라산악회 느와르 섯다</span><span class="brand-mobile">바산 섯다</span><small>BASAN NOIR SEOTDA</small>
         </div>
         <div class="status">
           <div class="header-tools">
