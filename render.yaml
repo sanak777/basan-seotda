@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: basan-seotda
+    runtime: static
+    buildCommand: echo "Static site ready"
+    staticPublishPath: .
+    autoDeployTrigger: commit
