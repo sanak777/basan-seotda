@@ -265,6 +265,54 @@
         color: #ffd476;
         text-shadow: 0 3px 8px #000;
       }
+      .rank-guide {
+        position: absolute;
+        z-index: 6;
+        right: 2.2%;
+        top: 27%;
+        width: 21.5%;
+        padding: 7px 6px;
+        border: 1px solid #cda75f66;
+        border-radius: 10px;
+        background: linear-gradient(145deg, #061a12dc, #020a07e8);
+        box-shadow: inset 0 0 18px #0009, 0 5px 14px #0008;
+        pointer-events: none;
+      }
+      .rank-guide-title {
+        margin-bottom: 4px;
+        color: #f2d488;
+        text-align: center;
+        font: 900 clamp(7px, .85vw, 11px) Georgia, "Noto Serif KR", serif;
+        letter-spacing: 1px;
+      }
+      .rank-list { display: grid; gap: 1px; }
+      .rank-row {
+        display: flex;
+        align-items: center;
+        min-height: 13px;
+        padding: 1px 3px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        color: #b8cbbd;
+        font-size: clamp(6px, .72vw, 9px);
+        line-height: 1.05;
+        white-space: nowrap;
+      }
+      .rank-row b { width: 17px; color: #d2b46d; font-size: .92em; }
+      .rank-row.active {
+        border-color: #ffdc79;
+        background: linear-gradient(90deg, #a52a20e8, #5c150fe8);
+        color: #fff3b2;
+        box-shadow: 0 0 9px #ffc84c99, inset 0 0 7px #ffd26c33;
+        font-weight: 900;
+        transform: translateX(-3px) scale(1.04);
+      }
+      .rank-special {
+        margin-top: 4px;
+        color: #8fae9a;
+        text-align: center;
+        font-size: clamp(5px, .58vw, 8px);
+      }
       .money {
         height: 13px;
         width: 72px;
@@ -637,6 +685,18 @@
           inset: 15% 1.5%;
           border-width: 5px;
         }
+        .rank-guide {
+          right: 1.7%;
+          top: 28%;
+          width: 24%;
+          padding: 5px 4px;
+          border-radius: 7px;
+        }
+        .rank-guide-title { margin-bottom: 2px; font-size: 7px; }
+        .rank-list { gap: 0; }
+        .rank-row { min-height: 11px; padding: 1px 2px; font-size: 6px; }
+        .rank-row b { width: 13px; }
+        .rank-special { margin-top: 2px; font-size: 5px; }
         .seat {
           width: 19%;
           height: 30%;
@@ -747,6 +807,13 @@
           border-width: 9px;
           box-shadow: inset 0 0 0 3px #b98746, inset 0 0 85px #000, 0 18px 55px #000;
         }
+        .rank-guide {
+          right: 2.4%;
+          top: 26%;
+          width: 20%;
+          padding: 9px 8px;
+        }
+        .rank-row { min-height: 16px; font-size: 9px; }
         .seat { width: 19.2%; height: 31%; gap: 4px; }
         .seat.top { top: -1%; }
         .seat.bottom { bottom: -1%; }
@@ -810,6 +877,25 @@
             <span>현재 총판돈</span><b id="pot">₩0</b>
             <div class="money"></div>
           </div>
+          <aside class="rank-guide" id="rankGuide" aria-label="섯다 족보 순위">
+            <div class="rank-guide-title">섯다 족보</div>
+            <div class="rank-list">
+              <div class="rank-row" data-rank="gwang38"><b>1</b>38광땡</div>
+              <div class="rank-row" data-rank="gwang"><b>2</b>13·18광땡</div>
+              <div class="rank-row" data-rank="jangddang"><b>3</b>장땡</div>
+              <div class="rank-row" data-rank="ddang"><b>4</b>9땡~1땡</div>
+              <div class="rank-row" data-rank="ali"><b>5</b>알리</div>
+              <div class="rank-row" data-rank="doksa"><b>6</b>독사</div>
+              <div class="rank-row" data-rank="gubbing"><b>7</b>구삥</div>
+              <div class="rank-row" data-rank="jangbbing"><b>8</b>장삥</div>
+              <div class="rank-row" data-rank="jangsa"><b>9</b>장사</div>
+              <div class="rank-row" data-rank="seryuk"><b>10</b>세륙</div>
+              <div class="rank-row" data-rank="gabo"><b>11</b>갑오</div>
+              <div class="rank-row" data-rank="kkeut"><b>12</b>8끗~1끗</div>
+              <div class="rank-row" data-rank="mangtong"><b>13</b>망통</div>
+            </div>
+            <div class="rank-special">특수 · 암행어사 / 땡잡이</div>
+          </aside>
         </div>
         <div class="center-msg" id="msg"></div>
         <div id="seats"></div>
@@ -1533,6 +1619,17 @@
           return '<div class="hwatu back"></div>';
         }
 
+        function rankGroup(handName) {
+          if (handName === "38광땡") return "gwang38";
+          if (/광땡$/.test(handName)) return "gwang";
+          if (handName === "장땡") return "jangddang";
+          if (/땡$/.test(handName)) return "ddang";
+          return ({
+            알리: "ali", 독사: "doksa", 구삥: "gubbing", 장삥: "jangbbing",
+            장사: "jangsa", 세륙: "seryuk", 갑오: "gabo", 망통: "mangtong"
+          })[handName] || (/끗$/.test(handName) ? "kkeut" : "");
+        }
+
         function renderNetwork() {
           if (!networkState) return;
           mySeat = networkState.youSeat;
@@ -1554,6 +1651,10 @@
           $("#meLabel").textContent = me ? `${mySeat + 1}번 · ${me.name}` : "자리 선택 전";
           $("#mycash").textContent = fmt(me?.cash || 0);
           $("#mybet").textContent = fmt(me?.bet || 0);
+          const activeRank = rankGroup(me?.hand || "");
+          document.querySelectorAll(".rank-row").forEach((row) => {
+            row.classList.toggle("active", Boolean(activeRank) && row.dataset.rank === activeRank);
+          });
           document.querySelectorAll("[data-act]").forEach((button) => {
             button.disabled = !networkState.canAct;
             button.onclick = () => socket.emit("bet", button.dataset.act);
