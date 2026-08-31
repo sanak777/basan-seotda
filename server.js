@@ -13,6 +13,9 @@ const ANTE = 10_000;
 const ADMIN_PASSWORD = "8959";
 const seats = Array(10).fill(null);
 const admins = new Set();
+const connections = new Map();
+const cleanupTimers = new Map();
+const actionTimers = new Map();
 let deck = [];
 let pot = 0;
 let currentBet = 0;
@@ -25,6 +28,9 @@ let resultText = "";
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const cleanName = (value) => String(value || "").trim().slice(0, 8);
+const cleanToken = (value) => String(value || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
+const tokenOf = (socket) => socket.data.playerToken;
+const isConnected = (token) => (connections.get(token)?.size || 0) > 0;
 const activeSeats = () => seats.map((p, i) => p && !p.fold && p.cash >= 0 ? i : -1).filter((i) => i >= 0);
 
 function freshDeck() {
@@ -83,16 +89,18 @@ function score(player, field) {
 }
 
 function publicState(socketId) {
+  const viewer = io.sockets.sockets.get(socketId);
+  const viewerToken = viewer ? tokenOf(viewer) : "";
   const revealAll = phase === "reveal" || phase === "result";
   return {
     round, phase, message, resultText, pot, currentBet, busy,
-    youSeat: seats.findIndex((p) => p?.socketId === socketId),
-    canAct: pending.has(socketId),
+    youSeat: seats.findIndex((p) => p?.playerToken === viewerToken),
+    canAct: pending.has(viewerToken),
     seats: seats.map((p) => p && ({
       name: p.name, character: p.character, cash: p.cash, bet: p.bet,
-      fold: p.fold, connected: true,
-      cards: revealAll || p.socketId === socketId ? p.cards : p.cards.map(() => null),
-      hand: p.cards.length === 2 && (revealAll || p.socketId === socketId) ? hand(p.cards) : ""
+      fold: p.fold, connected: isConnected(p.playerToken),
+      cards: revealAll || p.playerToken === viewerToken ? p.cards : p.cards.map(() => null),
+      hand: p.cards.length === 2 && (revealAll || p.playerToken === viewerToken) ? hand(p.cards) : ""
     }))
   };
 }
@@ -121,7 +129,7 @@ function beginBetting(nextPhase) {
   phase = nextPhase;
   busy = false;
   message = nextPhase === "bet1" ? "첫 패 · 1차 베팅" : "두 패 · 최종 베팅";
-  pending = new Set(activeSeats().map((i) => seats[i].socketId));
+  pending = new Set(activeSeats().map((i) => seats[i].playerToken));
   broadcast();
   if (!pending.size) settle();
 }
@@ -137,7 +145,9 @@ async function startRound() {
   currentBet = ANTE;
   deck = freshDeck();
   for (const p of seats) if (p) {
-    p.cards = []; p.bet = 0; p.fold = p.cash <= 0;
+    // Keep a temporarily disconnected player's seat, but never let an offline
+    // seat block a newly started betting round.
+    p.cards = []; p.bet = 0; p.fold = p.cash <= 0 || !isConnected(p.playerToken);
     if (!p.fold) invest(p, ANTE);
   }
   broadcast();
@@ -182,25 +192,42 @@ async function settle() {
 }
 
 io.on("connection", (socket) => {
+  let playerToken = cleanToken(socket.handshake.auth?.playerToken);
+  if (!playerToken) playerToken = `guest_${socket.id.replace(/[^a-zA-Z0-9]/g, "")}`;
+  socket.data.playerToken = playerToken;
+  if (!connections.has(playerToken)) connections.set(playerToken, new Set());
+  connections.get(playerToken).add(socket.id);
+  if (cleanupTimers.has(playerToken)) {
+    clearTimeout(cleanupTimers.get(playerToken));
+    cleanupTimers.delete(playerToken);
+  }
+  if (actionTimers.has(playerToken)) {
+    clearTimeout(actionTimers.get(playerToken));
+    actionTimers.delete(playerToken);
+  }
   socket.emit("state", publicState(socket.id));
+  broadcast();
 
   socket.on("sit", (data, ack = () => {}) => {
     const name = cleanName(data?.name);
     const seat = Number(data?.seat);
     const character = Number(data?.character);
     if (!name || !Number.isInteger(seat) || seat < 0 || seat > 9 || !Number.isInteger(character) || character < 0 || character > 5) return ack({ ok: false, error: "입력 정보를 확인해주세요" });
+    const old = seats.findIndex((p) => p?.playerToken === playerToken);
+    if (old >= 0) {
+      ack({ ok: true, restored: true, seat: old });
+      return broadcast();
+    }
     if (seats[seat]) return ack({ ok: false, error: "이미 사용 중인 자리입니다" });
-    const old = seats.findIndex((p) => p?.socketId === socket.id);
-    if (old >= 0) seats[old] = null;
-    seats[seat] = { socketId: socket.id, name, character, cash: BUY_IN, cards: [], bet: 0, fold: false };
+    seats[seat] = { playerToken, name, character, cash: BUY_IN, cards: [], bet: 0, fold: false };
     ack({ ok: true });
     broadcast();
   });
 
   socket.on("bet", (type, ack = () => {}) => {
-    const index = seats.findIndex((p) => p?.socketId === socket.id);
+    const index = seats.findIndex((p) => p?.playerToken === playerToken);
     const p = seats[index];
-    if (!p || !["bet1", "bet2"].includes(phase) || !pending.has(socket.id) || p.fold) return ack({ ok: false });
+    if (!p || !["bet1", "bet2"].includes(phase) || !pending.has(playerToken) || p.fold) return ack({ ok: false });
     const need = Math.max(0, currentBet - p.bet);
     if (type === "fold") p.fold = true;
     else if (type === "check") { if (need > 0) invest(p, need); }
@@ -208,7 +235,7 @@ io.on("connection", (socket) => {
     else if (type === "ddang") invest(p, need + Math.max(ANTE, currentBet));
     else if (type === "half") invest(p, need + Math.max(ANTE, pot / 2));
     else return ack({ ok: false });
-    pending.delete(socket.id);
+    pending.delete(playerToken);
     ack({ ok: true });
     broadcast();
     if (!pending.size || activeSeats().length <= 1) advance();
@@ -221,12 +248,17 @@ io.on("connection", (socket) => {
   socket.on("admin-start", () => { if (admins.has(socket.id)) startRound(); });
   socket.on("admin-restart", () => {
     if (!admins.has(socket.id)) return;
+    for (const timer of actionTimers.values()) clearTimeout(timer);
+    actionTimers.clear();
     busy = false; phase = "idle"; pending.clear(); resultText = ""; message = "게임이 재시작되었습니다";
     for (const p of seats) if (p) { p.cash = BUY_IN; p.cards = []; p.bet = 0; p.fold = false; }
     pot = 0; currentBet = 0; round = 0; broadcast();
   });
   socket.on("admin-explode", () => {
     if (!admins.has(socket.id)) return;
+    for (const timer of cleanupTimers.values()) clearTimeout(timer);
+    for (const timer of actionTimers.values()) clearTimeout(timer);
+    cleanupTimers.clear(); actionTimers.clear();
     for (let i = 0; i < seats.length; i++) seats[i] = null;
     busy = false; phase = "idle"; pending.clear(); resultText = ""; message = "방이 종료되었습니다";
     pot = 0; currentBet = 0; round = 0; broadcast(); io.emit("room-exploded");
@@ -234,8 +266,35 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     admins.delete(socket.id);
-    const index = seats.findIndex((p) => p?.socketId === socket.id);
-    if (index >= 0) { pending.delete(socket.id); seats[index] = null; broadcast(); if (["bet1", "bet2"].includes(phase) && !pending.size) advance(); }
+    const set = connections.get(playerToken);
+    if (set) {
+      set.delete(socket.id);
+      if (!set.size) connections.delete(playerToken);
+    }
+    if (isConnected(playerToken)) return broadcast();
+    broadcast();
+    if (pending.has(playerToken)) {
+      const actionTimer = setTimeout(() => {
+        actionTimers.delete(playerToken);
+        if (!isConnected(playerToken) && pending.delete(playerToken)) {
+          const index = seats.findIndex((p) => p?.playerToken === playerToken);
+          if (index >= 0 && seats[index]) seats[index].fold = true;
+          broadcast();
+          if (!pending.size || activeSeats().length <= 1) advance();
+        }
+      }, 20_000);
+      actionTimers.set(playerToken, actionTimer);
+    }
+    const cleanupTimer = setTimeout(() => {
+      cleanupTimers.delete(playerToken);
+      if (isConnected(playerToken)) return;
+      const index = seats.findIndex((p) => p?.playerToken === playerToken);
+      if (index >= 0) seats[index] = null;
+      pending.delete(playerToken);
+      broadcast();
+      if (["bet1", "bet2"].includes(phase) && (!pending.size || activeSeats().length <= 1)) advance();
+    }, 60_000);
+    cleanupTimers.set(playerToken, cleanupTimer);
   });
 });
 

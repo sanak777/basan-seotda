@@ -1618,7 +1618,25 @@
     <script src="/socket.io/socket.io.js"></script>
     <script>
       (() => {
-        const socket = io();
+        let playerToken = "";
+        try {
+          playerToken = localStorage.getItem("basanSeotdaPlayerToken") || "";
+          if (!playerToken) {
+            const random = new Uint32Array(2);
+            crypto.getRandomValues(random);
+            playerToken = `p_${Date.now().toString(36)}_${random[0]}_${random[1]}`;
+            localStorage.setItem("basanSeotdaPlayerToken", playerToken);
+          }
+        } catch (_) {
+          playerToken = `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+        }
+        const socket = io({
+          auth: { playerToken },
+          reconnection: true,
+          reconnectionAttempts: Infinity,
+          reconnectionDelay: 700,
+          reconnectionDelayMax: 4000
+        });
         let networkState = null;
         let mySeat = -1;
 
