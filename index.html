@@ -1519,5 +1519,99 @@
       } catch (_) {}
       render();
     </script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      (() => {
+        const socket = io();
+        let networkState = null;
+        let mySeat = -1;
+
+        function backCard() {
+          return '<div class="hwatu back"></div>';
+        }
+
+        function renderNetwork() {
+          if (!networkState) return;
+          mySeat = networkState.youSeat;
+          const revealAll = ["reveal", "result"].includes(networkState.phase);
+          $("#seats").innerHTML = networkState.seats.map((p, physicalSeat) => {
+            const top = physicalSeat < 5;
+            const pos = physicalSeat % 5;
+            if (!p) return `<div class="seat empty ${top ? "top" : "bottom"} s${pos + 1}"><div class="badge"><div class="name">${physicalSeat + 1}. 빈 자리</div></div><div class="cards"></div></div>`;
+            const avatar = `<span class="avatar" style="background-image:url('${CHARACTER_IMAGES[p.character]}')"></span>`;
+            const cards = p.cards.map((c) => c ? card(c, false) : backCard()).join("");
+            const handLabel = p.hand ? `<span class="handname">${physicalSeat === mySeat ? "내 족보 · " : ""}${p.hand}</span>` : "";
+            return `<div class="seat ${top ? "top" : "bottom"} s${pos + 1}" data-seat="${physicalSeat}"><div class="badge ${p.fold ? "fold" : ""}"><div class="name">${avatar}${physicalSeat + 1}. ${p.name}</div><div class="cash">₩${fmt(p.cash)}</div></div><div class="cards">${cards}${handLabel}</div></div>`;
+          }).join("");
+          $("#pot").textContent = "₩" + fmt(networkState.pot);
+          $("#round").textContent = networkState.round ? `제 ${networkState.round}판` : "대기실";
+          $("#phase").textContent = networkState.message || "";
+          $("#msg").textContent = networkState.message || "";
+          const me = mySeat >= 0 ? networkState.seats[mySeat] : null;
+          $("#meLabel").textContent = me ? `${mySeat + 1}번 · ${me.name}` : "자리 선택 전";
+          $("#mycash").textContent = fmt(me?.cash || 0);
+          $("#mybet").textContent = fmt(me?.bet || 0);
+          document.querySelectorAll("[data-act]").forEach((button) => {
+            button.disabled = !networkState.canAct;
+            button.onclick = () => socket.emit("bet", button.dataset.act);
+          });
+          document.querySelectorAll("[data-lobby-seat]").forEach((button) => {
+            const occupied = Boolean(networkState.seats[+button.dataset.lobbySeat]);
+            button.disabled = occupied;
+            button.textContent = `${+button.dataset.lobbySeat + 1}번 · ${occupied ? "사용 중" : "빈 자리"}`;
+            if (occupied && lobbySeat === +button.dataset.lobbySeat) {
+              lobbySeat = -1;
+              button.classList.remove("selected");
+              refreshSitButton();
+            }
+          });
+          if (networkState.resultText) {
+            $("#toast").innerHTML = `<strong>${networkState.resultText}</strong>`;
+            $("#toast").classList.add("show");
+          } else {
+            $("#toast").classList.remove("show");
+          }
+        }
+
+        socket.on("state", (state) => {
+          networkState = state;
+          if (state.youSeat >= 0) {
+            $("#intro").classList.add("hidden");
+            $("#seatLobby").classList.add("hidden");
+            $("#game").classList.remove("prejoin");
+          }
+          renderNetwork();
+        });
+
+        $("#sitButton").onclick = () => {
+          const name = $("#nickname").value.trim();
+          if (!name || lobbyCharacter < 0 || lobbySeat < 0) return;
+          socket.emit("sit", { name, character: lobbyCharacter, seat: lobbySeat }, (reply) => {
+            if (!reply?.ok) alert(reply?.error || "자리에 앉지 못했습니다");
+          });
+        };
+
+        $("#adminEnter").onclick = () => {
+          socket.emit("admin-login", $("#adminPassword").value, (reply) => {
+            if (!reply?.ok) {
+              $("#adminError").textContent = "비밀번호가 올바르지 않습니다";
+              return;
+            }
+            $("#adminLogin").style.display = "none";
+            $("#adminActions").classList.remove("hidden");
+          });
+        };
+        $("#start").onclick = () => socket.emit("admin-start");
+        $("#adminStart").onclick = () => { closeAdmin(); socket.emit("admin-start"); };
+        $("#adminRestart").onclick = () => { closeAdmin(); socket.emit("admin-restart"); };
+        $("#adminExplode").onclick = () => {
+          if (confirm("게임을 종료하고 모든 좌석을 비우시겠습니까?")) socket.emit("admin-explode");
+        };
+        socket.on("room-exploded", () => {
+          try { sessionStorage.clear(); } catch (_) {}
+          location.reload();
+        });
+      })();
+    </script>
   </body>
 </html>
