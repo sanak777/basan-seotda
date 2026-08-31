@@ -97,17 +97,41 @@ function hand(cards) {
 
 function score(player, field) {
   const h = hand(player.cards);
+  // Keep every normal hand in a non-overlapping score band.  In particular,
+  // even 1땡 must always beat 알리/끗, so 4땡 can never lose to 8끗.
   let value = 0;
-  if (h === "38광땡") value = 1000;
-  else if (/광땡/.test(h)) value = 950;
-  else if (h === "장땡") value = 900;
-  else if (/땡$/.test(h)) value = 800 + Number.parseInt(h, 10) * 5;
-  else value = ({ 알리: 700, 독사: 690, 구삥: 680, 장삥: 670, 장사: 660, 세륙: 650, 갑오: 609, 망통: 600 })[h] ?? 600 + Number.parseInt(h, 10);
+  if (h === "38광땡") value = 1300;
+  else if (/광땡/.test(h)) value = 1100;
+  else if (h === "장땡") value = 1000;
+  else if (/^[1-9]땡$/.test(h)) value = 900 + Number.parseInt(h, 10);
+  else value = ({ 알리: 800, 독사: 790, 구삥: 780, 장삥: 770, 장사: 760, 세륙: 750, 갑오: 709, 망통: 700 })[h] ?? 700 + Number.parseInt(h, 10);
   const hasGwang = field.some((p) => /^(13|18)광땡$/.test(hand(p.cards)));
   const hasDdang = field.some((p) => /^([1-9])땡$/.test(hand(p.cards)));
-  if (player.cards.some((c) => c.sp === "bird4") && player.cards.some((c) => c.sp === "boar7") && hasGwang) value = 975;
-  if (player.cards.some((c) => c.sp === "g3") && player.cards.some((c) => c.sp === "boar7") && hasDdang) value = 925;
+  if (player.cards.some((c) => c.sp === "bird4") && player.cards.some((c) => c.sp === "boar7") && hasGwang) value = 1200;
+  if (player.cards.some((c) => c.sp === "g3") && player.cards.some((c) => c.sp === "boar7") && hasDdang) value = 1050;
   return value;
+}
+
+function isFourNine(player) {
+  const months = player.cards.map((card) => card.m).sort((a, b) => a - b);
+  return months[0] === 4 && months[1] === 9;
+}
+
+function isMungFourNine(player) {
+  return isFourNine(player)
+    && player.cards.some((card) => card.sp === "bird4")
+    && player.cards.some((card) => card.sp === "cup9");
+}
+
+function fourNineRematchPlayer(field) {
+  const candidates = field.filter(isFourNine);
+  if (!candidates.length || field.length < 2) return null;
+  return candidates.find((candidate) => {
+    const opponents = field.filter((player) => player !== candidate);
+    const opponentBest = Math.max(...opponents.map((player) => score(player, field)));
+    // 일반 구사: 알리 이하. 멍텅구리 구사: 1땡~9땡까지(장땡 제외).
+    return isMungFourNine(candidate) ? opponentBest <= 909 : opponentBest <= 800;
+  }) || null;
 }
 
 function publicState(socketId) {
@@ -126,7 +150,9 @@ function publicState(socketId) {
       fold: p.fold, eliminated: p.eliminated, missedBets: p.missedBets,
       connected: isConnected(p.playerToken),
       cards: revealAll || p.playerToken === viewerToken ? p.cards : p.cards.map(() => null),
-      hand: p.cards.length === 2 && (revealAll || p.playerToken === viewerToken) ? hand(p.cards) : ""
+      hand: p.cards.length === 2 && (revealAll || p.playerToken === viewerToken)
+        ? (isFourNine(p) ? "사구·구사 재경기" : hand(p.cards))
+        : ""
     }))
   };
 }
@@ -299,15 +325,12 @@ async function settle() {
   if (!live.length) {
     resultText = "승자 없음";
   } else {
-    const rematchPlayer = live.find((p) => {
-      const months = p.cards.map((card) => card.m).sort((a, b) => a - b);
-      return months[0] === 4 && months[1] === 9;
-    });
+    const rematchPlayer = fourNineRematchPlayer(live);
     if (rematchPlayer && live.length > 1) {
       const rematchTokens = new Set(live.map((p) => p.playerToken));
       phase = "result";
       busy = false;
-      resultText = `4·9 / 9·4 구사 · 판돈 ₩${pot.toLocaleString("ko-KR")} 재경기`;
+      resultText = `${isMungFourNine(rematchPlayer) ? "멍텅구리 구사" : "사구·구사"} · 판돈 ₩${pot.toLocaleString("ko-KR")} 재경기`;
       message = resultText;
       broadcast();
       if (gameRunning) nextRoundTimer = setTimeout(() => startRound({ keepPot: true, rematchTokens }), 3500);

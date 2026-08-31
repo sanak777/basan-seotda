@@ -212,6 +212,12 @@
         backdrop-filter: blur(7px);
       }
       .admin-modal.hidden { display: none; }
+      .toast-close {
+        position: absolute; right: 8px; top: 5px; width: 28px; height: 28px;
+        border: 1px solid #d7b36d; border-radius: 50%; background: #210b09;
+        color: #ffe09a; font-size: 20px; line-height: 22px; cursor: pointer;
+        pointer-events: auto;
+      }
       .admin-panel {
         position: relative;
         width: min(390px, 94vw);
@@ -703,6 +709,7 @@
         opacity: 1;
         transform: translate(-50%, -50%) scale(1);
       }
+      .toast.show.closable { pointer-events: auto; }
       .toast strong {
         display: block;
         font: 900 27px Georgia;
@@ -952,8 +959,8 @@
               <div class="rank-row" data-rank="gubbing"><b>7</b>구삥</div>
             </div>
           </aside>
-          <aside class="rank-guide right" aria-label="섯다 족보 8위부터 13위와 특수패">
-            <div class="rank-guide-title">족보 8~13위</div>
+          <aside class="rank-guide right" aria-label="섯다 족보 8위부터 14위와 특수패">
+            <div class="rank-guide-title">족보 8~14위</div>
             <div class="rank-list">
               <div class="rank-row" data-rank="jangbbing"><b>8</b>장삥</div>
               <div class="rank-row" data-rank="jangsa"><b>9</b>장사</div>
@@ -961,6 +968,7 @@
               <div class="rank-row" data-rank="gabo"><b>11</b>갑오</div>
               <div class="rank-row" data-rank="kkeut"><b>12</b>8끗~1끗</div>
               <div class="rank-row" data-rank="mangtong"><b>13</b>망통</div>
+              <div class="rank-row" data-rank="four-nine"><b>14</b>사구·구사 재경기</div>
             </div>
             <div class="rank-special">특수 · 암행어사 / 땡잡이</div>
           </aside>
@@ -1751,6 +1759,7 @@
         }
 
         function rankGroup(handName) {
+          if (handName.startsWith("사구·구사")) return "four-nine";
           if (handName === "38광땡") return "gwang38";
           if (/광땡$/.test(handName)) return "gwang";
           if (handName === "장땡") return "jangddang";
@@ -1760,6 +1769,8 @@
             장사: "jangsa", 세륙: "seryuk", 갑오: "gabo", 망통: "mangtong"
           })[handName] || (/끗$/.test(handName) ? "kkeut" : "");
         }
+
+        let dismissedFinalResult = "";
 
         function renderNetwork() {
           if (!networkState) return;
@@ -1809,11 +1820,19 @@
               refreshSitButton();
             }
           });
-          if (networkState.resultText) {
-            $("#toast").innerHTML = `<strong>${networkState.resultText}</strong>`;
+          if (networkState.resultText && networkState.resultText !== dismissedFinalResult) {
+            const isFinalWinner = networkState.resultText.startsWith("최후의 1인");
+            $("#toast").classList.toggle("closable", isFinalWinner);
+            $("#toast").innerHTML = `${isFinalWinner ? '<button class="toast-close" aria-label="우승창 닫기">×</button>' : ""}<strong>${networkState.resultText}</strong>`;
             $("#toast").classList.add("show");
+            const close = $("#toast .toast-close");
+            if (close) close.onclick = () => {
+              dismissedFinalResult = networkState.resultText;
+              $("#toast").classList.remove("show");
+            };
           } else {
             $("#toast").classList.remove("show");
+            $("#toast").classList.remove("closable");
           }
         }
 
