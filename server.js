@@ -44,7 +44,9 @@ const cleanToken = (value) => String(value || "").replace(/[^a-zA-Z0-9_-]/g, "")
 const tokenOf = (socket) => socket.data.playerToken;
 const isConnected = (token) => (connections.get(token)?.size || 0) > 0;
 const activeSeats = () => seats.map((p, i) => p && !p.eliminated && !p.fold ? i : -1).filter((i) => i >= 0);
-const tournamentSeats = () => seats.map((p, i) => p && !p.eliminated && p.cash > 0 ? i : -1).filter((i) => i >= 0);
+// A zero-cash player can still be alive while contesting a carried all-in pot
+// (for example during a 4·9 rematch). Bankruptcy is finalized after showdown.
+const tournamentSeats = () => seats.map((p, i) => p && !p.eliminated ? i : -1).filter((i) => i >= 0);
 
 function clearBettingTimer() {
   if (bettingTimer) clearTimeout(bettingTimer);
@@ -242,7 +244,9 @@ function beginBetting(nextPhase) {
   raceRound = 1;
   pending = new Set(activeSeats().filter((i) => seats[i].cash > 0).map((i) => seats[i].playerToken));
   turnSeat = nextPendingSeat(dealerSeat);
-  if (turnSeat < 0) return settle();
+  // When everybody is all-in, do not reveal a one-card hand. Finish dealing
+  // the second card first, then proceed directly to showdown.
+  if (turnSeat < 0) return nextPhase === "bet1" ? advance() : settle();
   startTurnTimer();
 }
 
@@ -282,7 +286,8 @@ async function startRound(options = {}) {
   resultText = "";
   message = "첫 패를 돌립니다";
   if (!options.keepPot) pot = 0;
-  currentBet = ANTE;
+  const carriedRematch = Boolean(options.keepPot);
+  currentBet = carriedRematch ? 0 : ANTE;
   deck = freshDeck();
   dealerSeat = chooseNextDealer();
   const rematchTokens = options.rematchTokens || null;
@@ -298,8 +303,10 @@ async function startRound(options = {}) {
       }
     }
     p.cards = []; p.bet = 0;
-    p.fold = p.eliminated || p.cash <= 0 || offline || (rematchTokens && !rematchTokens.has(p.playerToken));
-    if (!p.fold) invest(p, ANTE);
+    // A surviving all-in player must receive cards in a carried rematch even
+    // with ₩0 remaining. No second ante is charged on that rematch.
+    p.fold = p.eliminated || offline || (rematchTokens && !rematchTokens.has(p.playerToken));
+    if (!p.fold && !carriedRematch) invest(p, ANTE);
   }
   broadcast();
   await dealOneEach();

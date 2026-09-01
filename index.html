@@ -86,6 +86,14 @@
         transform: translateY(2px);
         filter: brightness(1.15);
       }
+      .intro-buttons { display: grid; gap: 9px; justify-items: center; }
+      .spectate-button {
+        width: min(340px, 76vw); padding: 11px 20px; border: 1px solid #927348;
+        border-radius: 7px; background: #120a08e8; color: #d9c39a;
+        font: 800 15px Georgia, "Noto Serif KR", serif; letter-spacing: 3px;
+        cursor: pointer; touch-action: manipulation;
+      }
+      .lobby-panel .spectate-button { width: 100%; margin-top: 4px; }
       .seat-lobby {
         position: fixed;
         inset: 0;
@@ -908,10 +916,14 @@
             <li>베팅 시간은 15초이며, 시간 안에 선택하지 않으면 자동 다이됩니다.</li>
             <li>미베팅이 10회 누적되면 자동 탈락합니다.</li>
             <li>마지막까지 남은 최후의 1인이 우승합니다.</li>
-            <li>연결이 잠시 끊겨도 60초 안에 돌아오면 기존 자리로 복귀합니다.</li>
+            <li>연결이 잠시 끊겨도 기존 좌석과 보유금이 유지됩니다.</li>
+            <li>게임 참가를 못한 분은 관전 모드로 실시간 시청할 수 있습니다.</li>
           </ul>
         </div>
-        <button class="join-button" id="joinGame">게임 참가</button>
+        <div class="intro-buttons">
+          <button class="join-button" id="joinGame">게임 참가</button>
+          <button class="spectate-button" data-watch-game>관전하기</button>
+        </div>
       </div>
     </section>
     <section class="seat-lobby hidden" id="seatLobby" aria-label="자리 선택 화면">
@@ -925,6 +937,7 @@
         <label>앉을 자리 선택</label>
         <div class="seat-map" id="seatMap"></div>
         <button class="sit-button" id="sitButton" disabled>자리 앉기</button>
+        <button class="spectate-button" data-watch-game>자리 없이 관전하기</button>
       </div>
     </section>
     <div class="game prejoin" id="game">
@@ -1600,6 +1613,7 @@
       function refreshSitButton() {
         $("#sitButton").disabled = !(
           $("#nickname").value.trim() && lobbyCharacter >= 0 && lobbySeat >= 0
+          && document.body.dataset.gameRunning !== "true"
         );
       }
       $("#nickname").addEventListener("input", refreshSitButton);
@@ -1740,6 +1754,23 @@
         });
         let networkState = null;
         let mySeat = -1;
+        let spectatorMode = false;
+
+        function enterSpectatorMode() {
+          spectatorMode = true;
+          const bgm = $("#bgm");
+          bgm.volume = Number($("#soundVolume").value) / 100;
+          bgm.play().catch(() => {});
+          $("#intro").classList.add("hidden");
+          $("#seatLobby").classList.add("hidden");
+          $("#game").classList.remove("prejoin");
+          $("#meLabel").textContent = "관전 중";
+          if (networkState) renderNetwork();
+        }
+
+        document.querySelectorAll("[data-watch-game]").forEach((button) => {
+          button.addEventListener("click", enterSpectatorMode);
+        });
 
         function paintBetTimer() {
           const timer = $("#betTimer");
@@ -1774,6 +1805,7 @@
 
         function renderNetwork() {
           if (!networkState) return;
+          document.body.dataset.gameRunning = String(Boolean(networkState.gameRunning));
           mySeat = networkState.youSeat;
           const revealAll = ["reveal", "result"].includes(networkState.phase);
           $("#seats").innerHTML = networkState.seats.map((p, physicalSeat) => {
@@ -1798,7 +1830,9 @@
           $("#adminOpen").classList.toggle("hidden", hideAdmin);
           if (hideAdmin) $("#adminModal").classList.add("hidden");
           const me = mySeat >= 0 ? networkState.seats[mySeat] : null;
-          $("#meLabel").textContent = me ? `${networkState.canAct ? "▶ 내 베팅 차례 · " : ""}${mySeat + 1}번 · ${me.name}` : "자리 선택 전";
+          $("#meLabel").textContent = me
+            ? `${networkState.canAct ? "▶ 내 베팅 차례 · " : ""}${mySeat + 1}번 · ${me.name}`
+            : spectatorMode ? "관전 중 · 베팅 불가" : "자리 선택 전";
           $("#mycash").textContent = fmt(me?.cash || 0);
           $("#mybet").textContent = fmt(me?.bet || 0);
           const activeRank = rankGroup(me?.hand || "");
@@ -1824,14 +1858,20 @@
           });
           document.querySelectorAll("[data-lobby-seat]").forEach((button) => {
             const occupied = Boolean(networkState.seats[+button.dataset.lobbySeat]);
-            button.disabled = occupied;
-            button.textContent = `${+button.dataset.lobbySeat + 1}번 · ${occupied ? "사용 중" : "빈 자리"}`;
+            button.disabled = occupied || networkState.gameRunning;
+            button.textContent = `${+button.dataset.lobbySeat + 1}번 · ${occupied ? "사용 중" : networkState.gameRunning ? "참가 마감" : "빈 자리"}`;
             if (occupied && lobbySeat === +button.dataset.lobbySeat) {
               lobbySeat = -1;
               button.classList.remove("selected");
               refreshSitButton();
             }
           });
+          if (networkState.gameRunning && mySeat < 0) {
+            $("#sitButton").disabled = true;
+            $("#sitButton").textContent = "게임 진행 중 · 관전만 가능";
+          } else {
+            $("#sitButton").textContent = "자리 앉기";
+          }
           if (networkState.resultText && networkState.resultText !== dismissedFinalResult) {
             const isFinalWinner = networkState.resultText.startsWith("최후의 1인");
             $("#toast").classList.toggle("closable", isFinalWinner);
